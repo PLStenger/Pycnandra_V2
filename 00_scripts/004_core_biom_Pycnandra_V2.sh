@@ -17,8 +17,8 @@ BIOM_ENV="biom-format"
 MARKERS=("16S" "ITS")
 # Mettre a une profondeur choisie apres lecture de 002. 0 = profondeur auto :
 # minimum de reads parmi les 12 echantillons biologiques decontamines.
-SAMPLING_DEPTH_16S=0
-SAMPLING_DEPTH_ITS=0
+SAMPLING_DEPTH_16S=2285
+SAMPLING_DEPTH_ITS=4736
 RUN_DECONTAM=true
 RUN_RAREFY=true
 RUN_CORE_METRICS=true
