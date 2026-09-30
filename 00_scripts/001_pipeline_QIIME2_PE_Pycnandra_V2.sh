@@ -11,6 +11,11 @@
 # de diversite une fois la table decontaminee produite.
 # =============================================================================
 set -Eeuo pipefail
+
+export JAVA_HOME="${JAVA_HOME:-}"
+export JAVA_LD_LIBRARY_PATH="${JAVA_LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+
 shopt -s nullglob
 IFS=$'\n\t'
 trap 'rc=$?; echo "[ERREUR] Code ${rc}, ligne ${LINENO}: ${BASH_COMMAND}" >&2; exit "${rc}"' ERR
@@ -65,7 +70,13 @@ DADA2_CHIM_METHOD_ITS="consensus"
 
 log(){ printf '[%(%F %T)T] %s\n' -1 "$*" | tee -a "${LOG_DIR}/pipeline.log"; }
 die(){ log "ERREUR : $*"; exit 1; }
-activate_env(){ conda deactivate >/dev/null 2>&1 || true; conda activate "$1"; }
+activate_env(){
+  export JAVA_HOME="${JAVA_HOME:-}"
+  export JAVA_LD_LIBRARY_PATH="${JAVA_LD_LIBRARY_PATH:-}"
+  export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+  conda deactivate >/dev/null 2>&1 || true
+  conda activate "$1"
+}
 check_command(){ command -v "$1" >/dev/null 2>&1 || die "Commande introuvable : $1"; }
 marker_to_lower(){ tr '[:upper:]' '[:lower:]' <<< "$1"; }
 
