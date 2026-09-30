@@ -1,33 +1,154 @@
 #!/usr/bin/env bash
-# =============================================================================
 # 002_rarefaction_Pycnandra_V2.sh
-# Courbes de rarefaction alpha apres retrait des ASV presents dans PYC-NEG.
-# Les profondeurs maximales sont determinees automatiquement a partir de la
-# table decontaminee, et non reprises du projet Araucaria.
-# =============================================================================
+# Soustraction des ASV de PYC-NEG, puis courbes de rarefaction
+# pour les seuls échantillons biologiques *-5-*.
+
 set -Eeuo pipefail
-PROJECT_NAME="Pycnandra_V2"
-PROJECT_DIR="/nvme/bio/data_fungi/${PROJECT_NAME}"
+
+PROJECT_DIR="/nvme/bio/data_fungi/Pycnandra_V2"
 RESULTS_DIR="${PROJECT_DIR}/02_amplicon_pipeline"
 QIIME_ENV="qiime2-amplicon-2025.7"
-MARKERS=("16S" "ITS")
+BIOM_ENV="biom-format"
+
 eval "$(conda shell.bash hook)"
-conda activate "$QIIME_ENV"
-for marker in "${MARKERS[@]}"; do
-  lc="$(tr '[:upper:]' '[:lower:]' <<< "$marker")"
-  QIIME_DIR="${RESULTS_DIR}/${lc}/05_qiime2"
-  DATABASE="${RESULTS_DIR}/${lc}/04_database_files"
-  TABLE="${QIIME_DIR}/decontam/table_no_negative_asvs_biological_only.qza"
-  TREE="${QIIME_DIR}/tree/rooted-tree.qza"
-  META="${DATABASE}/sample-metadata_${lc}.tsv"
-  OUT="${QIIME_DIR}/visual/alpha-rarefaction_${lc}_decontam_biological_only.qzv"
-  [[ -f "$TABLE" && -f "$TREE" && -f "$META" ]] || { echo "Artefact manquant pour $marker. Lancez d'abord 004." >&2; exit 1; }
-  max_depth=$(qiime feature-table summarize --i-table "$TABLE" --o-visualization "${QIIME_DIR}/visual/_tmp_table_summary_${lc}.qzv" >/dev/null 2>&1; qiime tools export --input-path "${QIIME_DIR}/visual/_tmp_table_summary_${lc}.qzv" --output-path "${QIIME_DIR}/visual/_tmp_table_summary_${lc}" >/dev/null 2>&1; python - "${QIIME_DIR}/visual/_tmp_table_summary_${lc}/data/sample-frequency-detail.csv" <<'PY'
-import pandas as pd,sys
-x=pd.read_csv(sys.argv[1]); print(int(x.iloc[:,1].max()))
-PY
-)
-  rm -rf "${QIIME_DIR}/visual/_tmp_table_summary_${lc}"
-  qiime diversity alpha-rarefaction --i-table "$TABLE" --i-phylogeny "$TREE" --p-max-depth "$max_depth" --p-min-depth 1 --m-metadata-file "$META" --o-visualization "$OUT"
-  echo "$marker : rarefaction alpha ecrite dans $OUT (max-depth=$max_depth)"
+
+qiime_run() {
+    conda run -n "${QIIME_ENV}" qiime "$@"
+}
+
+biom_run() {
+    conda run -n "${BIOM_ENV}" biom "$@"
+}
+
+for marker in 16S ITS; do
+    lc="$(tr '[:upper:]' '[:lower:]' <<< "${marker}")"
+
+    QIIME_DIR="${RESULTS_DIR}/${lc}/05_qiime2"
+    DATABASE="${RESULTS_DIR}/${lc}/04_database_files"
+    DECON="${QIIME_DIR}/decontam"
+    VISUAL="${QIIME_DIR}/visual"
+
+    INPUT="${QIIME_DIR}/core/table.qza"
+    TREE="${QIIME_DIR}/tree/rooted-tree.qza"
+    META="${DATABASE}/sample-metadata_${lc}.tsv"
+
+    NEG_TABLE="${DECON}/table_PYC_NEG_only.qza"
+    NEG_EXPORT="${DECON}/export_PYC_NEG"
+    NEG_TSV="${DECON}/table_PYC_NEG.tsv"
+    NEG_IDS="${DECON}/negative_asv_ids.tsv"
+
+    NO_NEG_ASV="${DECON}/table_no_negative_asvs.qza"
+    BIO="${DECON}/table_no_negative_asvs_biological_only.qza"
+
+    BIO_EXPORT="${DECON}/export_biological"
+    BIO_TSV="${DECON}/table_biological_decontaminated.tsv"
+    OUT="${VISUAL}/alpha-rarefaction_${lc}_decontam_biological_only.qzv"
+
+    mkdir -p "${DECON}" "${VISUAL}"
+
+    for file in "${INPUT}" "${TREE}" "${META}"; do
+        [[ -s "${file}" ]] || {
+            echo "${marker} : fichier manquant ou vide : ${file}" >&2
+            exit 1
+        }
+    done
+
+    echo "=== ${marker} : isolement de PYC-NEG ==="
+
+    rm -f "${NEG_TABLE}" "${NO_NEG_ASV}" "${BIO}" "${OUT}"
+    rm -rf "${NEG_EXPORT}" "${BIO_EXPORT}"
+
+    qiime_run feature-table filter-samples \
+        --i-table "${INPUT}" \
+        --m-metadata-file "${META}" \
+        --p-where "[sample_type]='negative_control'" \
+        --o-filtered-table "${NEG_TABLE}"
+
+    qiime_run tools export \
+        --input-path "${NEG_TABLE}" \
+        --output-path "${NEG_EXPORT}"
+
+    biom_run convert \
+        -i "${NEG_EXPORT}/feature-table.biom" \
+        -o "${NEG_TSV}" \
+        --to-tsv
+
+    # La première ligne est le commentaire BIOM ; la deuxième est l'en-tête.
+    # Les lignes suivantes contiennent les ASV détectés dans PYC-NEG.
+    {
+        printf '#FeatureID\n'
+        awk -F '\t' 'NR > 2 && $1 != "" {print $1}' "${NEG_TSV}"
+    } > "${NEG_IDS}"
+
+    n_asv="$(awk 'END {print NR - 1}' "${NEG_IDS}")"
+    (( n_asv > 0 )) || {
+        echo "${marker} : aucun ASV détecté dans PYC-NEG ; arrêt pour vérification." >&2
+        exit 1
+    }
+
+    echo "${marker} : ${n_asv} ASV détectés dans PYC-NEG."
+
+    echo "=== ${marker} : soustraction des ASV du contrôle ==="
+
+    qiime_run feature-table filter-features \
+        --i-table "${INPUT}" \
+        --m-metadata-file "${NEG_IDS}" \
+        --p-exclude-ids \
+        --o-filtered-table "${NO_NEG_ASV}"
+
+    echo "=== ${marker} : exclusion de PYC-NEG de la table biologique ==="
+
+    qiime_run feature-table filter-samples \
+        --i-table "${NO_NEG_ASV}" \
+        --m-metadata-file "${META}" \
+        --p-where "[sample_type]='biological'" \
+        --o-filtered-table "${BIO}"
+
+    # Export de la table biologique pour obtenir les profondeurs réelles
+    # après décontamination, sans reprendre celles du projet Araucaria.
+    qiime_run tools export \
+        --input-path "${BIO}" \
+        --output-path "${BIO_EXPORT}"
+
+    biom_run convert \
+        -i "${BIO_EXPORT}/feature-table.biom" \
+        -o "${BIO_TSV}" \
+        --to-tsv
+
+    # Somme des lectures par colonne (échantillon), puis maximum observé.
+    max_depth="$(
+        awk -F '\t' '
+            NR == 2 { n = NF; next }
+            NR > 2 {
+                for (i = 2; i <= n; i++) total[i] += $i
+            }
+            END {
+                max = 0
+                for (i = 2; i <= n; i++) {
+                    if (total[i] > max) max = total[i]
+                }
+                printf "%.0f\n", max
+            }
+        ' "${BIO_TSV}"
+    )"
+
+    (( max_depth > 0 )) || {
+        echo "${marker} : profondeur maximale nulle après décontamination." >&2
+        exit 1
+    }
+
+    echo "${marker} : courbe de rarefaction, profondeur maximale = ${max_depth}"
+
+    qiime_run diversity alpha-rarefaction \
+        --i-table "${BIO}" \
+        --i-phylogeny "${TREE}" \
+        --p-min-depth 1 \
+        --p-max-depth "${max_depth}" \
+        --m-metadata-file "${META}" \
+        --o-visualization "${OUT}"
+
+    echo "${marker} : table décontaminée : ${BIO}"
+    echo "${marker} : courbe de rarefaction : ${OUT}"
 done
+
+echo "002 terminé pour 16S et ITS."
