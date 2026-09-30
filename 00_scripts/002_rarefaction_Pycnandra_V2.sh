@@ -73,12 +73,18 @@ for marker in 16S ITS; do
         -o "${NEG_TSV}" \
         --to-tsv
 
-    # La première ligne est le commentaire BIOM ; la deuxième est l'en-tête.
-    # Les lignes suivantes contiennent les ASV détectés dans PYC-NEG.
+       # Fichier de métadonnées QIIME2 : en-tête reconnu + IDs des ASV.
     {
-        printf '#FeatureID\n'
-        awk -F '\t' 'NR > 2 && $1 != "" {print $1}' "${NEG_TSV}"
+        printf 'feature-id\n'
+        awk -F '\t' '
+            $1 !~ /^#/ &&
+            length($1) == 32 &&
+            $1 ~ /^[[:xdigit:]]+$/ {
+                print $1
+            }
+        ' "${NEG_TSV}"
     } > "${NEG_IDS}"
+    
 
     n_asv="$(awk 'END {print NR - 1}' "${NEG_IDS}")"
     (( n_asv > 0 )) || {
@@ -116,11 +122,19 @@ for marker in 16S ITS; do
         --to-tsv
 
     # Somme des lectures par colonne (échantillon), puis maximum observé.
-    max_depth="$(
+       max_depth="$(
         awk -F '\t' '
-            NR == 2 { n = NF; next }
-            NR > 2 {
-                for (i = 2; i <= n; i++) total[i] += $i
+            $1 ~ /^#OTU ID$/ || $1 ~ /^#OTU ID[[:space:]]*$/ {
+                n = NF
+                next
+            }
+            $1 ~ /^#/ || NF < 2 {
+                next
+            }
+            {
+                for (i = 2; i <= NF; i++) {
+                    total[i] += $i
+                }
             }
             END {
                 max = 0
