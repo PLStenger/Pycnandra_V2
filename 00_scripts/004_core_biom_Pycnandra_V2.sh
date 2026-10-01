@@ -19,7 +19,7 @@ MARKERS=("16S" "ITS")
 # minimum de reads parmi les 12 echantillons biologiques decontamines.
 SAMPLING_DEPTH_16S=2285
 SAMPLING_DEPTH_ITS=4736
-RUN_DECONTAM=true
+RUN_DECONTAM=false
 RUN_RAREFY=true
 RUN_CORE_METRICS=true
 RUN_EXPORT=true
@@ -35,54 +35,7 @@ for marker in "${MARKERS[@]}"; do
   mkdir -p "$DECON" "$EXP"
   INPUT="$CORE/table.qza"; require "$INPUT"; require "$TREE"; require "$META"
   NEG_IDS="$DECON/negative_asv_ids.qza"; NO_NEG_ASV="$DECON/table_no_negative_asvs.qza"; BIO="$DECON/table_no_negative_asvs_biological_only.qza"; REMOVED="$DECON/asvs_removed_from_PYC_NEG.tsv"
-  if [[ "$RUN_DECONTAM" == true ]]; then
-  rm -f "$NO_NEG_ASV" "$BIO" \
-        "$DECON/table_PYC_NEG_only.qza" \
-        "$DECON/negative_asv_ids.txt"
-  rm -rf "$DECON/export_neg"
-
-  # 1. Isoler l'échantillon PYC-NEG dans la table DADA2.
-  qiime_run feature-table filter-samples \
-    --i-table "$INPUT" \
-    --m-metadata-file "$META" \
-    --p-where "[sample_type]='negative_control'" \
-    --o-filtered-table "$DECON/table_PYC_NEG_only.qza"
-
-  # 2. Exporter sa table et récupérer les identifiants des ASV présents.
-  qiime_run tools export \
-    --input-path "$DECON/table_PYC_NEG_only.qza" \
-    --output-path "$DECON/export_neg"
-
-  biom_run convert \
-    -i "$DECON/export_neg/feature-table.biom" \
-    -o "$DECON/negative_control_table.tsv" \
-    --to-tsv
-
-  awk 'NR > 2 && $1 != "" {print $1}' \
-    "$DECON/negative_control_table.tsv" \
-    > "$DECON/negative_asv_ids.txt"
-
-  [[ -s "$DECON/negative_asv_ids.txt" ]] || {
-    echo "Aucun ASV détecté dans PYC-NEG pour $marker : arrêt pour vérification." >&2
-    exit 1
-  }
-
-  # 3. Exclure ces ASV de la table entière.
-  qiime_run feature-table filter-features \
-    --i-table "$INPUT" \
-    --m-metadata-file "$DECON/negative_asv_ids.txt" \
-    --p-exclude-ids \
-    --o-filtered-table "$NO_NEG_ASV"
-
-  # 4. Ne conserver que les échantillons biologiques pour la diversité.
-  qiime_run feature-table filter-samples \
-    --i-table "$NO_NEG_ASV" \
-    --m-metadata-file "$META" \
-    --p-where "[sample_type]='biological'" \
-    --o-filtered-table "$BIO"
-
-  cp "$DECON/negative_asv_ids.txt" "$REMOVED"
-fi
+  
   require "$BIO"
   summary_qzv="$DECON/table_biological_decontam_summary.qzv"; summary_dir="$DECON/table_biological_decontam_summary"
   rm -f "$summary_qzv"; rm -rf "$summary_dir"; qiime_run feature-table summarize --i-table "$BIO" --m-sample-metadata-file "$META" --o-visualization "$summary_qzv"; qiime_run tools export --input-path "$summary_qzv" --output-path "$summary_dir"
@@ -96,7 +49,7 @@ PY
   RAR="$DECON/RarTable_depth${depth}.qza"; CM="$DECON/core-metrics-depth${depth}"; EXPCM="$EXP/core-metrics-depth${depth}"
   if [[ "$RUN_RAREFY" == true ]]; then rm -f "$RAR"; qiime_run feature-table rarefy --i-table "$BIO" --p-sampling-depth "$depth" --p-no-with-replacement --o-rarefied-table "$RAR"; fi
   require "$RAR"
-  if [[ "$RUN_CORE_METRICS" == true ]]; then rm -rf "$CM"; qiime_run diversity core-metrics-phylogenetic --i-phylogeny "$TREE" --i-table "$BIO" --p-sampling-depth "$depth" --m-metadata-file "$META" --p-n-jobs-or-threads 1 --output-dir "$CM"; fi
+  if [[ "$RUN_CORE_METRICS" == true ]]; then rm -rf "$CM"; qiime_run diversity core-metrics-phylogenetic --i-phylogeny "$TREE" --i-table "$RAR" --p-sampling-depth "$depth" --m-metadata-file "$META" --p-n-jobs-or-threads 1 --output-dir "$CM"; fi
   if [[ "$RUN_EXPORT" == true ]]; then
     rm -rf "$EXPCM"; mkdir -p "$EXPCM/rarefied_table"
     qiime_run tools export --input-path "$RAR" --output-path "$EXPCM/rarefied_table"
