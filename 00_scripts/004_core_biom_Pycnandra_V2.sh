@@ -39,13 +39,15 @@ for marker in "${MARKERS[@]}"; do
   require "$BIO"
   summary_qzv="$DECON/table_biological_decontam_summary.qzv"; summary_dir="$DECON/table_biological_decontam_summary"
   rm -f "$summary_qzv"; rm -rf "$summary_dir"; qiime_run feature-table summarize --i-table "$BIO" --m-sample-metadata-file "$META" --o-visualization "$summary_qzv"; qiime_run tools export --input-path "$summary_qzv" --output-path "$summary_dir"
-  auto_depth=$(python - "$summary_dir/data/sample-frequency-detail.csv" <<'PY'
-import pandas as pd,sys
-x=pd.read_csv(sys.argv[1]); print(int(x.iloc[:,1].min()))
-PY
-)
-  case "$marker" in 16S) configured="$SAMPLING_DEPTH_16S";; ITS) configured="$SAMPLING_DEPTH_ITS";; esac
-  depth="$auto_depth"; [[ "$configured" -gt 0 ]] && depth="$configured"
+  case "$marker" in
+    16S) depth="$SAMPLING_DEPTH_16S" ;;
+    ITS) depth="$SAMPLING_DEPTH_ITS" ;;
+esac
+
+(( depth > 0 )) || {
+    echo "Profondeur de rarefaction non définie pour $marker" >&2
+    exit 1
+}
   RAR="$DECON/RarTable_depth${depth}.qza"; CM="$DECON/core-metrics-depth${depth}"; EXPCM="$EXP/core-metrics-depth${depth}"
   if [[ "$RUN_RAREFY" == true ]]; then rm -f "$RAR"; qiime_run feature-table rarefy --i-table "$BIO" --p-sampling-depth "$depth" --p-no-with-replacement --o-rarefied-table "$RAR"; fi
   require "$RAR"
